@@ -8,11 +8,12 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 client.once('ready', async () => {
     console.log(`🚀 Logged in as ${client.user.tag}`);
-    await registerCommands(client); // Register slash commands
-    await startTwitchMonitor();      // Start monitoring Twitch clips
-    await notifyBotOwner();          // Notify the bot owner of startup
+    await registerCommands(client);
+    await startTwitchMonitor();
+    await notifyBotOwner();
 });
 
+// Notify bot owner of successful startup
 async function notifyBotOwner() {
     try {
         const owner = await client.users.fetch(process.env.BOT_OWNER_ID);
@@ -40,19 +41,14 @@ async function startTwitchMonitor() {
         for (const config of configs) {
             const { guild_id, twitch_channel, discord_channel } = config;
 
-            // Ensure the Twitch channel is valid
-            if (!twitch_channel || twitch_channel === 'null') {
-                console.error(`Invalid Twitch channel name for guild ID: ${guild_id}`);
-                continue;
-            }
-
+            // Fetch Twitch channel ID by name
             const broadcasterId = await getBroadcasterId(twitch_channel, twitchToken);
             if (!broadcasterId) {
                 console.error(`Failed to get broadcaster ID for channel: ${twitch_channel}`);
                 continue;
             }
 
-            const clips = await fetchAllTwitchClips(broadcasterId, twitchToken);
+            const clips = await fetchTwitchClips(broadcasterId, twitchToken);
             for (const clip of clips) {
                 const isNewClip = await db.checkClip(guild_id, clip.id);
                 if (!isNewClip) {
@@ -73,7 +69,7 @@ async function startTwitchMonitor() {
     }, 60000);
 }
 
-// Get broadcaster ID for a given Twitch channel name
+// Helper: Get broadcaster ID for a given channel name
 async function getBroadcasterId(channelName, token) {
     try {
         const url = `https://api.twitch.tv/helix/users?login=${channelName}`;
@@ -106,37 +102,30 @@ async function getTwitchToken() {
     }
 }
 
-// Fetch all clips from Twitch using pagination
-async function fetchAllTwitchClips(broadcasterId, token) {
-    let clips = [];
-    let cursor = null;
-    const url = `https://api.twitch.tv/helix/clips?broadcaster_id=${broadcasterId}&first=20`;
-
+// Fetch clips from Twitch using the broadcaster ID
+async function fetchTwitchClips(broadcasterId, token) {
+    const url = `https://api.twitch.tv/helix/clips?broadcaster_id=${broadcasterId}&first=5`;
     try {
-        do {
-            const response = await axios.get(cursor ? `${url}&after=${cursor}` : url, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Client-Id': process.env.TWITCH_CLIENT_ID
-                }
-            });
-            clips = clips.concat(response.data.data);
-            cursor = response.data.pagination?.cursor || null;
-        } while (cursor);
-        return clips;
+        const response = await axios.get(url, {
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Client-Id': process.env.TWITCH_CLIENT_ID
+            }
+        });
+        return response.data.data || [];
     } catch (error) {
         console.error(`Error fetching clips for broadcaster ID ${broadcasterId}:`, error.message);
         return [];
     }
 }
 
-// Create an embed for each clip
+// Helper: Create an embed for each clip with richer details
 function createClipEmbed(clip) {
     return new EmbedBuilder()
         .setColor('#9146FF')
         .setTitle(clip.title || 'Untitled Clip')
         .setURL(clip.url)
-        .setThumbnail(clip.thumbnail_url)
+        .setImage(clip.thumbnail_url)
         .addFields(
             { name: 'Channel', value: clip.broadcaster_name || 'Unknown', inline: true },
             { name: 'Clipped By', value: clip.creator_name || 'Anonymous', inline: true },
