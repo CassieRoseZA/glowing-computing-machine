@@ -1,62 +1,43 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { REST } = require('@discordjs/rest');
+const { Routes } = require('discord-api-types/v10');
+const { SlashCommandBuilder } = require('discord.js');
 const db = require('./database');
 
-module.exports = {
-    registerCommands: async (client) => {
-        const clipzCommand = new SlashCommandBuilder()
-            .setName('clipz')
-            .setDescription('Enable Twitch clip monitoring for a Twitch channel.')
-            .addStringOption(option =>
-                option.setName('twitch_channel')
-                    .setDescription('Twitch channel name to monitor')
-                    .setRequired(true))
-            .addChannelOption(option =>
-                option.setName('discord_channel')
-                    .setDescription('Discord channel to post clips')
-                    .setRequired(true));
+const commands = [
+    new SlashCommandBuilder()
+        .setName('clipz')
+        .setDescription('Start monitoring a Twitch channel for clips.')
+        .addStringOption(option => 
+            option.setName('twitch_channel')
+                .setDescription('The Twitch channel to monitor.')
+                .setRequired(true))
+        .addChannelOption(option => 
+            option.setName('discord_channel')
+                .setDescription('The Discord channel to send clips to.')
+                .setRequired(true)),
+    
+    new SlashCommandBuilder()
+        .setName('cliplist')
+        .setDescription('List currently monitored Twitch clips.'),
 
-        const commands = [clipzCommand.toJSON()];
+    new SlashCommandBuilder()
+        .setName('unclipz')
+        .setDescription('Stop monitoring a Twitch channel for clips.')
+        .addStringOption(option => 
+            option.setName('twitch_channel')
+                .setDescription('The Twitch channel to stop monitoring.')
+                .setRequired(true))
+];
 
-        client.application.commands.set(commands);
+module.exports.registerCommands = async (client) => {
+    const commandData = commands.map(command => command.toJSON());
+    const rest = new REST({ version: '10' }).setToken(process.env.BOT_TOKEN);
 
-        client.on('interactionCreate', async (interaction) => {
-            if (!interaction.isChatInputCommand()) return;
-
-            if (interaction.commandName === 'clipz') {
-                const twitchChannel = interaction.options.getString('twitch_channel').trim();
-                const discordChannel = interaction.options.getChannel('discord_channel');
-
-                // Prevent null or empty channel names
-                if (!twitchChannel || twitchChannel.toLowerCase() === 'null') {
-                    return interaction.reply({
-                        content: '❌ Invalid Twitch channel name. Please provide a valid Twitch channel name.',
-                        ephemeral: true,
-                    });
-                }
-
-                // Check if Twitch channel is already monitored in this guild
-                const existingConfig = await db.getChannelConfig(interaction.guild.id, twitchChannel);
-                if (existingConfig) {
-                    return interaction.reply({
-                        content: `❌ The Twitch channel **${twitchChannel}** is already being monitored in this guild.`,
-                        ephemeral: true,
-                    });
-                }
-
-                // Add new configuration if not already monitored
-                await db.addChannelConfig(interaction.guild.id, twitchChannel, discordChannel.id);
-
-                const embed = new EmbedBuilder()
-                    .setColor('#0099ff')
-                    .setTitle('✅ Now Monitoring Clips')
-                    .setDescription(`Monitoring **${twitchChannel}** for new clips in ${discordChannel}.`)
-                    .setFooter({ text: 'Powered by CassieRoseZA' })
-                    .setTimestamp();
-
-                return interaction.reply({ embeds: [embed] });
-            }
-
-            // Additional command handlers can be added here
-        });
+    try {
+        console.log('Started refreshing application (/) commands.');
+        await rest.put(Routes.applicationCommands(process.env.BOT_CLIENT_ID), { body: commandData });
+        console.log('Successfully reloaded application (/) commands.');
+    } catch (error) {
+        console.error(error);
     }
 };
