@@ -32,6 +32,8 @@ async function notifyBotOwner() {
     }
 }
 
+const fetchingLocks = new Map();
+
 // Periodically poll Twitch for new clips and post to Discord
 async function startTwitchMonitor() {
     const twitchToken = await getTwitchToken();
@@ -40,33 +42,58 @@ async function startTwitchMonitor() {
         const configs = await db.getAllChannelConfigs();
         for (const config of configs) {
             const { guild_id, twitch_channel, discord_channel } = config;
+            const key = `${guild_id}_${twitch_channel}`;
 
-            // Fetch Twitch channel ID by name
-            const broadcasterId = await getBroadcasterId(twitch_channel, twitchToken);
-            if (!broadcasterId) {
-                console.error(`Failed to get broadcaster ID for channel: ${twitch_channel}`);
-                continue;
+            if (fetchingLocks.get(key)) {
+                console.log(`Fetch already in progress for ${twitch_channel} in guild ${guild_id}. Skipping.`);
+                continue; 
             }
 
-            const clips = await fetchTwitchClips(broadcasterId, twitchToken);
-            for (const clip of clips) {
-                const isNewClip = await db.checkClip(guild_id, clip.id);
-                if (!isNewClip) {
-                    const discordChannel = client.channels.cache.get(discord_channel);
-                    const embed = createClipEmbed(clip);
-                    const button = new ActionRowBuilder().addComponents(
-                        new ButtonBuilder()
-                            .setLabel('🎬 Watch Clip')
-                            .setStyle(ButtonStyle.Link)
-                            .setURL(clip.url)
-                    );
+            fetchingLocks.set(key, true);
 
-                    await discordChannel.send({ embeds: [embed], components: [button] });
-                    await db.addClip(guild_id, clip.id);
+            try {
+                const broadcasterId = await getBroadcasterId(twitch_channel, twitchToken);
+                if (!broadcasterId) {
+                    console.error(`Failed to get broadcaster ID for channel: ${twitch_channel}`);
+                    continue;
                 }
+
+                await fetchTwichRecursive(guild_id, discord_channel, broadcasterId, twitchToken, twitch_channel);
+            } catch (error) {
+                console.error(`Error during fetching for ${twitch_channel} in guild ${guild_id}:`, error);
+            } finally {
+                fetchingLocks.delete(key);
             }
         }
     }, 60000);
+}
+
+async function fetchTwichRecursive(guild_id, discord_channel, broadcasterId, twitchToken, twitch_channel, cursor = undefined) {
+    const { data: clips, pagination } = await fetchTwitchClips(broadcasterId, twitchToken, cursor);
+
+    for (const clip of clips) {
+        if(await db.checkClip(guild_id, clip.id)) {
+            continue;
+        }
+
+        const discordChannel = client.channels.cache.get(discord_channel);
+        const embed = createClipEmbed(clip);
+        const button = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setLabel('🎬 Watch Clip')
+                .setStyle(ButtonStyle.Link)
+                .setURL(clip.url)
+        );
+
+        await discordChannel.send({ embeds: [embed], components: [button] });
+        await db.addClip(guild_id, clip.id);
+    }
+
+    if (pagination && pagination.cursor) {
+        setTimeout(async () => {
+            await fetchTwichRecursive(guild_id, discord_channel, broadcasterId, twitchToken, twitch_channel, pagination.cursor)
+        }, 1000);
+    }
 }
 
 // Helper: Get broadcaster ID for a given channel name
@@ -103,8 +130,16 @@ async function getTwitchToken() {
 }
 
 // Fetch clips from Twitch using the broadcaster ID
-async function fetchTwitchClips(broadcasterId, token) {
-    const url = `https://api.twitch.tv/helix/clips?broadcaster_id=${broadcasterId}&first=5`;
+async function fetchTwitchClips(broadcasterId, token, cursor = undefined) {
+
+    const params = {
+        broadcaster_id: broadcasterId,
+        after: cursor,
+        first: 50,
+    }
+
+    const url = `https://api.twitch.tv/helix/clips?${objectToSearchParams(params)}`;
+
     try {
         const response = await axios.get(url, {
             headers: {
@@ -112,7 +147,8 @@ async function fetchTwitchClips(broadcasterId, token) {
                 'Client-Id': process.env.TWITCH_CLIENT_ID
             }
         });
-        return response.data.data || [];
+
+        return response.data;
     } catch (error) {
         console.error(`Error fetching clips for broadcaster ID ${broadcasterId}:`, error.message);
         return [];
@@ -132,6 +168,12 @@ function createClipEmbed(clip) {
             { name: 'Date', value: clip.created_at ? new Date(clip.created_at).toLocaleString() : 'Unknown', inline: true }
         )
         .setFooter({ text: 'Powered by CassieRoseZA' });
+}
+
+function objectToSearchParams(obj) {
+    return new URLSearchParams(
+        Object.entries(obj).filter(([_, value]) => value !== undefined)
+    ).toString();
 }
 
 client.login(process.env.BOT_TOKEN);
