@@ -8,12 +8,11 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 client.once('ready', async () => {
     console.log(`🚀 Logged in as ${client.user.tag}`);
-    await registerCommands(client); // Register slash commands
-    await startTwitchMonitor();     // Start monitoring Twitch clips
-    await notifyBotOwner();         // Notify the bot owner of startup
+    await registerCommands(client);
+    await startTwitchMonitor();  
+    await notifyBotOwner();  
 });
 
-// Notify bot owner of successful startup
 async function notifyBotOwner() {
     try {
         const owner = await client.users.fetch(process.env.BOT_OWNER_ID);
@@ -34,7 +33,6 @@ async function notifyBotOwner() {
 
 const fetchingLocks = new Map();
 
-// Periodically poll Twitch for new clips and post to Discord
 async function startTwitchMonitor() {
     const twitchToken = await getTwitchToken();
 
@@ -58,7 +56,7 @@ async function startTwitchMonitor() {
                     continue;
                 }
 
-                await fetchTwichRecursive(guild_id, discord_channel, broadcasterId, twitchToken, twitch_channel);
+                await fetchTwitchClipsRecursively(guild_id, discord_channel, broadcasterId, twitchToken, twitch_channel);
             } catch (error) {
                 console.error(`Error during fetching for ${twitch_channel} in guild ${guild_id}:`, error);
             } finally {
@@ -68,12 +66,12 @@ async function startTwitchMonitor() {
     }, 60000);
 }
 
-async function fetchTwichRecursive(guild_id, discord_channel, broadcasterId, twitchToken, twitch_channel, cursor = undefined) {
+async function fetchTwitchClipsRecursively(guild_id, discord_channel, broadcasterId, twitchToken, twitch_channel, cursor) {
     const { data: clips, pagination } = await fetchTwitchClips(broadcasterId, twitchToken, cursor);
 
     for (const clip of clips) {
-        if(await db.checkClip(guild_id, clip.id)) {
-            continue;
+        if (await db.checkClip(guild_id, clip.id)) {
+            continue; 
         }
 
         const discordChannel = client.channels.cache.get(discord_channel);
@@ -85,13 +83,13 @@ async function fetchTwichRecursive(guild_id, discord_channel, broadcasterId, twi
                 .setURL(clip.url)
         );
 
-        await discordChannel.send({ embeds: [embed], components: [button] });
         await db.addClip(guild_id, clip.id);
+        await discordChannel.send({ embeds: [embed], components: [button] });
     }
 
-    if (pagination && pagination.cursor) {
+    if (pagination?.cursor) {
         setTimeout(async () => {
-            await fetchTwichRecursive(guild_id, discord_channel, broadcasterId, twitchToken, twitch_channel, pagination.cursor)
+            await fetchTwitchClipsRecursively(guild_id, discord_channel, broadcasterId, twitchToken, twitch_channel, pagination.cursor);
         }, 1000);
     }
 }
@@ -129,14 +127,12 @@ async function getTwitchToken() {
     }
 }
 
-// Fetch clips from Twitch using the broadcaster ID
-async function fetchTwitchClips(broadcasterId, token, cursor = undefined) {
-
+async function fetchTwitchClips(broadcasterId, token, cursor) {
     const params = {
         broadcaster_id: broadcasterId,
         after: cursor,
         first: 50,
-    }
+    };
 
     const url = `https://api.twitch.tv/helix/clips?${objectToSearchParams(params)}`;
 
@@ -151,11 +147,10 @@ async function fetchTwitchClips(broadcasterId, token, cursor = undefined) {
         return response.data;
     } catch (error) {
         console.error(`Error fetching clips for broadcaster ID ${broadcasterId}:`, error.message);
-        return [];
+        return { data: [], pagination: null }; // Return empty data and null pagination to avoid errors
     }
 }
 
-// Helper: Create an embed for each clip with richer details
 function createClipEmbed(clip) {
     return new EmbedBuilder()
         .setColor('#9146FF')
