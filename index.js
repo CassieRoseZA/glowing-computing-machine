@@ -8,9 +8,9 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 client.once('ready', async () => {
     console.log(`🚀 Logged in as ${client.user.tag}`);
-    await registerCommands(client);
-    await startTwitchMonitor();
-    await notifyBotOwner();
+    await registerCommands(client); // Register slash commands
+    await startTwitchMonitor();     // Start monitoring Twitch clips
+    await notifyBotOwner();         // Notify the bot owner of startup
 });
 
 // Notify bot owner of successful startup
